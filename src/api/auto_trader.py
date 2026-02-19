@@ -16,6 +16,8 @@ from src.broker.kis_client import KISClient
 from src.strategy.auto_trader import AutoTrader, AutoTraderConfig, RiskLimits
 from src.strategy.auto_trader_scheduler import AutoTraderScheduler
 
+from asyncio import AbstractEventLoop
+
 router = APIRouter(
     prefix="/api/v1/auto-trader",
     tags=["AutoTrader"],
@@ -26,6 +28,18 @@ _current_config = AutoTraderConfig()
 
 # 모듈 수준 스케줄러 인스턴스 (싱글턴)
 _scheduler: AutoTraderScheduler | None = None
+# FastAPI 애플리케이션 메인 이벤트 루프 (lifespan에서 주입)
+_scheduler_loop: AbstractEventLoop | None = None
+
+
+def set_scheduler_event_loop(loop: AbstractEventLoop) -> None:
+    """AutoTraderScheduler가 사용할 이벤트 루프를 설정합니다.
+
+    FastAPI lifespan 컨텍스트(메인 이벤트 루프가 활성화된 곳)에서 호출되어,
+    이후 동기 엔드포인트(쓰레드풀)에서도 APScheduler가 올바른 루프에 붙도록 합니다.
+    """
+    global _scheduler_loop
+    _scheduler_loop = loop
 
 
 def _get_scheduler(client: KISClient) -> AutoTraderScheduler:
@@ -33,7 +47,10 @@ def _get_scheduler(client: KISClient) -> AutoTraderScheduler:
     global _scheduler
     if _scheduler is None:
         trader = AutoTrader(client, _current_config)
-        _scheduler = AutoTraderScheduler(trader)
+        kwargs: dict[str, Any] = {}
+        if _scheduler_loop is not None:
+            kwargs["event_loop"] = _scheduler_loop
+        _scheduler = AutoTraderScheduler(trader, **kwargs)
     return _scheduler
 
 

@@ -267,7 +267,7 @@ class TestGetCycleHistory:
 class TestSchedulerAPI:
     @pytest.fixture()
     def client(self) -> Any:
-        """FastAPI TestClient"""
+        """FastAPI TestClient (API 라우터 단위, 기존 동작 유지)"""
         from unittest.mock import patch as _patch
 
         # Mock dependencies
@@ -324,3 +324,49 @@ class TestSchedulerAPI:
         resp = test_client.get("/api/v1/auto-trader/scheduler/history")
         assert resp.status_code == 200
         assert resp.json() == []
+
+
+class TestSchedulerLifecycleIntegration:
+    """실제 FastAPI 앱 + lifespan 기반 스케줄러 통합 테스트.
+
+    /scheduler/start 호출 시 500이 발생하지 않고, 스케줄러 상태에서
+    is_running=True 가 반환되는지 확인합니다.
+    """
+
+    @pytest.fixture()
+    def client(self) -> Any:
+        from unittest.mock import patch as _patch
+
+        from fastapi.testclient import TestClient
+
+        from src.api import auto_trader as auto_trader_api
+        from src.main import app
+
+        # 기존 싱글턴 스케줄러 초기화
+        auto_trader_api._scheduler = None  # type: ignore[attr-defined]
+
+        # KISClient 및 AutoTrader.run_cycle 모킹 (실제 외부 호출 방지)
+        mock_kis = MagicMock()
+        mock_kis.get_balance.return_value = {"holdings": [], "summary": [{"tot_evlu_amt": 100000000}]}
+        mock_kis.get_price.return_value = {"stck_prpr": "50000", "prdy_ctrt": "1.5", "stck_hgpr": "51000", "stck_lwpr": "49000"}
+
+        with _patch("src.api.auto_trader.get_kis_client", return_value=mock_kis), \
+             _patch("src.strategy.auto_trader.AutoTrader.run_cycle", return_value={}):
+            # TestClient 는 lifespan 컨텍스트를 실행하므로, 내부에서
+            # set_scheduler_event_loop() 가 호출되어 APScheduler가 FastAPI 메인
+            # 이벤트 루프에 바인딩됩니다.
+            with TestClient(app) as test_client:
+                yield test_client
+
+    def test_scheduler_start_and_status_running(self, client: Any) -> None:
+        # /scheduler/start 호출 시 500이 아닌 200이 반환되어야 함
+        resp = client.post("/api/v1/auto-trader/scheduler/start", json={"interval_minutes": 15})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["is_running"] is True
+
+        # /scheduler/status 에서도 is_running=True 유지
+        resp_status = client.get("/api/v1/auto-trader/scheduler/status")
+        assert resp_status.status_code == 200
+        status = resp_status.json()
+        assert status["is_running"] is True

@@ -27,9 +27,26 @@ class AutoTraderScheduler:
 
     MAX_HISTORY = 100
 
-    def __init__(self, auto_trader: AutoTrader) -> None:
+    def __init__(self, auto_trader: AutoTrader, event_loop: Any | None = None) -> None:
+        """스케줄러 초기화
+
+        Parameters
+        ----------
+        auto_trader:
+            자동매매 엔진 인스턴스
+        event_loop:
+            APScheduler가 붙을 asyncio 이벤트 루프. FastAPI lifespan 등에서
+            애플리케이션 메인 이벤트 루프를 주입하는 용도로 사용합니다.
+            None 인 경우 기본 이벤트 루프 정책을 사용합니다.
+        """
         self._trader = auto_trader
-        self._scheduler = AsyncIOScheduler(timezone=KST)
+        # event_loop가 지정되면 AsyncIOScheduler가 get_running_loop()를 호출하지 않고
+        # 주어진 루프에 바로 붙기 때문에, FastAPI sync 엔드포인트의 쓰레드풀 컨텍스트에서도
+        # "no running event loop" 오류 없이 동작합니다.
+        scheduler_kwargs: dict[str, Any] = {"timezone": KST}
+        if event_loop is not None:
+            scheduler_kwargs["event_loop"] = event_loop
+        self._scheduler = AsyncIOScheduler(**scheduler_kwargs)
         self._is_running = False
         self._interval_minutes: int = 30
         self._kr_market_only: bool = True

@@ -11,6 +11,8 @@ from fastapi import FastAPI
 
 from config.settings import settings
 from src.api.alerts import router as alerts_router
+from src.api.auto_trader import set_scheduler_event_loop
+import asyncio
 from src.api.health import router as health_router
 from src.api.orders import router as orders_router
 from src.api.policies import router as policies_router
@@ -100,6 +102,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("🚀 Market Auto Trader 시작 (환경: %s)", settings.app_env)
     db_host = settings.database_url.split("@")[-1] if "@" in settings.database_url else "unknown"
     logger.info("📊 데이터베이스: %s", db_host)
+
+    # APScheduler가 FastAPI 메인 이벤트 루프에 붙도록 루프 객체를 주입
+    loop = asyncio.get_running_loop()
+    set_scheduler_event_loop(loop)
 
     yield
 
